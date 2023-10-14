@@ -3,19 +3,15 @@ import boto3
 import botocore
 from botocore.exceptions import ClientError
 from os import environ
-import uuid
-import base64
 
 
-rekognition = boto3.client('rekognition',  region_name='us-east-1')
 dynamodb = boto3.client('dynamodb', region_name='us-east-1')
-s3 = boto3.client('s3')
 cognito = boto3.client('cognito-idp', region_name='us-east-1')
-COLLECTION_NAME ='ephratria-face-recognize-custom-collection'
-BUCKET_SIGN_IN = 'ephratria-sign-in-biometrics'
-CLIENT_ID_COGNITO = '2ldje44kc7sedienob7hjcl61g'
-TABLE_NAME_BIOMETRIC = 'EPHRATRIA_FACE_BIOMETRICS'
-TABLE_NAME_USER = 'EPHRATRIA_USERS'
+TN_GROUPS = 'EPHRATRIA_GROUPS'
+TN_USERS_GROUPS = 'EPHRATRIA_USERS_GROUPS'
+PK_USER_GROUPS = 'USER_KEY'
+SK_USER_GROUPS = 'GROUP_KEY'
+PK_GROUPS = 'USER_POOL_ID'
 
 
 def retorno_api(status, body):
@@ -31,76 +27,91 @@ def retorno_api(status, body):
     }
 
     
-def get_password(username):
+def find_user(userName, groupId):
     try:
         response = dynamodb.query(
-            TableName=TABLE_GROUPS,
-            KeyConditionExpression="USERNAME = :key",
+            TableName=TN_USERS_GROUPS,
+            KeyConditionExpression="{0} = :username and {1} = :groupid"
+                .format(PK_USER_GROUPS, SK_USER_GROUPS),
             ExpressionAttributeValues={
-                ':key': {'S': username}
+                ':username': {'S': userName},
+                ':groupid': {'S': groupId}
             }
         )
-        print(json.dumps(response))
-        return response['Items']
+        return response
     except ClientError as err:
-        print(json.dumps(err.response['Error']))
+        raise err
+
+def find_group(groupId):
+    try:
+        response = dynamodb.query(
+            TableName=TN_GROUPS,
+            KeyConditionExpression="{0} = :groupid"
+                .format(PK_GROUPS),
+            ExpressionAttributeValues={
+                ':groupid': {'S': groupId}
+            }
+        )
+        return response
+    except ClientError as err:
         raise err
 
 
-def sign_in_cognito(username, password):
+def sign_in_cognito(clientId, username, password):
     try:
         response = cognito.initiate_auth(
             AuthFlow='USER_PASSWORD_AUTH',
-            ClientId=CLIENT_ID_COGNITO,
+            ClientId=clientId,
             AuthParameters={
                 'USERNAME': username,
                 'PASSWORD': password
             }
         )
-        print(json.dumps(response))
         return response
     except ClientError as err:
-        print(json.dumps(err.response['Error']))
         raise err
 
 
-def lambda_handler(event, context):
-    body = json.loads(event['body'])
-    file_string_base64 = body['biometric']
-    username = body['username']
-    keyObject = '{0}.jpeg'.format(str(uuid.uuid4()))
-    
-    if file_string_base64 and username and keyObject:
+def lambda_handler(event, context):    
+    userName = event['queryStringParameters']['username']
+    groupId = event['queryStringParameters']['groupId']
+    if userName and groupId:
         try:
-            uploaded = upload_biometric_sign_in(keyObject, file_string_base64, 
-                                                username)
-            if uploaded['ResponseMetadata']['HTTPStatusCode'] == 200:
-                usernames = search_user_by_biometrics(keyObject)
-                
-                print(len(usernames))
-                if len(usernames) > 0:
-                    for usr_name in usernames:
-                        if usr_name == username:
-                            rspds = get_password(username)
-                            for rspd in rspds:
-                                password = rspd['PASSWORD']['S']
-                                res = sign_in_cognito(username, password)
-                                print(json.dumps(res))
-                                return retorno_api(200, json.dumps(res))
-                else:
-                    return retorno_api(500, json.dumps('Biometric of User incorrect'))
-            else:
-                print(json.dumps(uploaded))
-                return retorno_api(500, json.dumps(uploaded))
+            response = find_user(userName, groupId) 
+
+            if response['ResponseMetadata']['HTTPStatusCode'] != 200:
+                return retorno_api(500, response)
+
+            print('Usuario encontrado')
+            password = response['Items'][0]['PASSWORD']['S']
+            response = find_group(groupId)
+
+            if response['ResponseMetadata']['HTTPStatusCode'] != 200:
+                return retorno_api(500, response)
+
+            print('Grupo encontrado')
+            clientId = response['Items'][0]['USER_POOL_CLIENT_ID']['S']
+            response = sign_in_cognito(clientId, userName, password)
+
+            if response['ResponseMetadata']['HTTPStatusCode'] != 200:
+                return retorno_api(500, response)
+
+            print('Usuario logou no cognito')
+            return retorno_api(200, response)
+
         except ClientError as err:
-            print(json.dumps(err.response['Error']))
             return retorno_api(500, json.dumps(err.response['Error']))
     else:
-        print('Query string parameters not given')
-        return retorno_api(500, json.dumps('Query string parameters not given'))
+        return retorno_api(500, {message: 'Query string parameters not given'})
 
 
 if __name__ == '__main__':
-    event = {}
+    event = {
+        "queryStringParameters":
+        {
+            "username": "pedrofreitaslima",
+            "groupId": "us-east-1_9ERsfSWYg"
+        }
+    }
     context = {}
     lambda_handler(event, context)
