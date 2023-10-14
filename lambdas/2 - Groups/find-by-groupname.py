@@ -5,10 +5,8 @@ from botocore.exceptions import ClientError
 from os import environ
 
 
-# TABLE_NAME = environ.get('TABLE_NAME')
-# client = boto3.client('dynamodb', region_name=environ.get('REGION_NAME'))
-PARTITION_KEY = 'USERNAME'
-TABLE_NAME = 'EPHRATRIA_USERS'
+TABLE_NAME = environ.get('TABLE_NAME')
+PARTITION_KEY = 'CLIENT_ID'
 dynamodb = boto3.client('dynamodb', region_name='us-east-1')
 
 
@@ -24,9 +22,25 @@ def retorno_api(status, body):
     }
   
 
+def parse_data(items):
+    response = []
+    for item in items:
+        groupname = item['GROUP_NAME']
+        admin_username = item['ADMIN_USER_NAME']
+        creation_date = item['CREATION_DATE']
+        data = {
+            'GROUP_NAME': groupname,
+            'ADMIN_USER_NAME': admin_username,
+            'CREATION_DATE': creation_date
+        }
+        print(data)
+        response.append(data)
+    return response
+
+
 def lambda_handler(event, context):
-    username = str(event['queryStringParameters']['username'])
-    if not username:
+    clientid = str(event['queryStringParameters']['clientid'])
+    if not clientid:
         return retorno_api(500, json.dumps('Query string parameters not given'))
     else:
         try:
@@ -34,16 +48,10 @@ def lambda_handler(event, context):
                 TableName=TABLE_NAME,
                 KeyConditionExpression="{0} = :key".format(PARTITION_KEY),
                 ExpressionAttributeValues={
-                    ':key': {'S': username}
+                    ':key': {'S': clientid}
                 }
             )
             items = response['Items']
             return retorno_api(200, json.dumps(items))
         except ClientError as err:
             return retorno_api(500, json.dumps(err.response['Error']))
-       
-
-if __name__ == '__main__':
-    event = {}
-    context  = {}
-    lambda_handler(event, context)

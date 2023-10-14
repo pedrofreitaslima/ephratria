@@ -28,8 +28,8 @@ def retorno_api(status, body):
     }
 
 
-def generate_password():
-    return 'EPHR_{0}'.format(uuid.uuid4())
+def generate_password(groupname):
+    return '{0}_{1}'.format(groupname.lower(), uuid.uuid4())
 
 
 def save_register(username, password, email, fullname):
